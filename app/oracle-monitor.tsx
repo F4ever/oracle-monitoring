@@ -169,35 +169,6 @@ function relativeTime(seconds: number) {
   return `${plural(Math.floor(seconds / 86400), "day")} ago`;
 }
 
-function relativeReportTime(seconds: number) {
-  if (seconds < 60) return "reported less than a minute ago";
-  if (seconds < 3600) {
-    return `reported ${plural(Math.floor(seconds / 60), "minute")} ago`;
-  }
-  if (seconds < 86400) {
-    return `reported ${plural(Math.floor(seconds / 3600), "hour")} ago`;
-  }
-  return `reported ${plural(Math.floor(seconds / 86400), "day")} ago`;
-}
-
-function slotReportDetails(slot: number, chainConfig: ChainConfig) {
-  if (slot === 0) {
-    return {
-      ageSeconds: Number.POSITIVE_INFINITY,
-      label: "No report yet",
-      timestamp: "This member has not reported for this module",
-    };
-  }
-
-  const timestamp = chainConfig.genesisTime + slot * chainConfig.secondsPerSlot;
-  const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
-  return {
-    ageSeconds,
-    label: relativeReportTime(ageSeconds),
-    timestamp: new Date(timestamp * 1000).toLocaleString(),
-  };
-}
-
 function formatTime(timestamp: number) {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -952,8 +923,7 @@ export default function OracleMonitor() {
                 <div>
                   <h2>Participation matrix</h2>
                   <p>
-                    Current members and each module’s last reported reference
-                    slot.
+                    Current members and each module’s latest DataBus telemetry.
                   </p>
                 </div>
                 <div className="legend">
@@ -961,10 +931,7 @@ export default function OracleMonitor() {
                     <i className="legend-good" /> within 24h
                   </span>
                   <span>
-                    <i className="legend-overdue" /> over 24h
-                  </span>
-                  <span>
-                    <i className="legend-missing" /> not present
+                    <i className="legend-overdue" /> over 24h or missing
                   </span>
                 </div>
               </header>
@@ -1004,32 +971,46 @@ export default function OracleMonitor() {
                             </div>
                           </td>
                           {MODULES.map(({ key }) => {
-                            const slot = member.lastSlots[key];
-                            const report =
-                              slot !== undefined
-                                ? slotReportDetails(slot, data.chainConfig)
-                                : null;
+                            const message = memberMessages
+                              .get(member.address)
+                              ?.get(key);
+                            const recent =
+                              !!message &&
+                              message.ageSeconds <= STALE_SECONDS;
                             return (
                               <td key={key}>
-                                {slot !== undefined && report ? (
+                                {message ? (
                                   <div
                                     className={`slot-cell ${
-                                      report.ageSeconds <= STALE_SECONDS
-                                        ? "recent"
-                                        : "overdue"
+                                      recent ? "recent" : "overdue"
                                     }`}
-                                    title={report.timestamp}
+                                    title={formatTime(message.timestamp)}
                                   >
                                     <span className="slot-ok">
-                                      <CheckCircle2 size={15} />
-                                      {slot.toLocaleString()}
+                                      {recent ? (
+                                        <CheckCircle2 size={15} />
+                                      ) : (
+                                        <AlertTriangle size={15} />
+                                      )}
+                                      #{message.blockNumber.toLocaleString()}
                                     </span>
                                     <span className="slot-relative">
-                                      {report.label}
+                                      {relativeTime(message.ageSeconds)}
                                     </span>
                                   </div>
                                 ) : (
-                                  <span className="slot-missing">—</span>
+                                  <div
+                                    className="slot-cell overdue"
+                                    title="No matching telemetry event in the 7-day window"
+                                  >
+                                    <span className="slot-ok">
+                                      <AlertTriangle size={15} />
+                                      No telemetry
+                                    </span>
+                                    <span className="slot-relative">
+                                      No message in 7d
+                                    </span>
+                                  </div>
                                 )}
                               </td>
                             );
