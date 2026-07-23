@@ -9,7 +9,6 @@ import {
 import {
   Activity,
   AlertTriangle,
-  Braces,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -481,10 +480,6 @@ function LoadingState() {
       </div>
     </div>
   );
-}
-
-function EmptyMessage() {
-  return <span className="empty-message">No message in 7d</span>;
 }
 
 function OracleReportInspector({
@@ -1022,97 +1017,6 @@ export default function OracleMonitor() {
               </div>
             </section>
 
-            <section className="panel telemetry-panel">
-              <header className="panel-header">
-                <div>
-                  <h2>Latest DataBus messages</h2>
-                  <p>
-                    One message per operator and module. Rows over 24 hours are
-                    highlighted.
-                  </p>
-                </div>
-                <span className="range-chip">7 day window</span>
-              </header>
-              <div className="operator-list">
-                {data.members.map((member) => {
-                  const messages = memberMessages.get(member.address);
-                  return (
-                    <article className="operator-row" key={member.address}>
-                      <header className="operator-identity">
-                        <div>
-                          <strong>
-                            {LABELS[member.address] ?? "Unknown operator"}
-                          </strong>
-                          <span>{shorten(member.address, 7, 5)}</span>
-                        </div>
-                        <span className="member-badge">
-                          <Check size={12} /> member
-                        </span>
-                      </header>
-                      <div className="message-grid">
-                        {MODULES.map(({ key }) => {
-                          const message = messages?.get(key);
-                          const stale =
-                            !message || message.ageSeconds > STALE_SECONDS;
-                          return (
-                            <div
-                              className={`message-line ${stale ? "stale" : ""}`}
-                              key={key}
-                            >
-                              <ModulePill module={key} />
-                              {message ? (
-                                <>
-                                  <div className="message-time">
-                                    <strong>
-                                      {relativeTime(message.ageSeconds)}
-                                    </strong>
-                                    <span>{formatTime(message.timestamp)}</span>
-                                  </div>
-                                  <code title={message.raw}>
-                                    {message.raw.replace(/\s+/g, " ").slice(0, 62)}
-                                  </code>
-                                  <a
-                                    className="block-link"
-                                    href={`${DATABUS_EXPLORER}/tx/${message.transactionHash}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    #{message.blockNumber.toLocaleString()}
-                                    <ExternalLink size={11} />
-                                  </a>
-                                  <div className="message-actions">
-                                    <CopyButton
-                                      value={message.raw}
-                                      onCopied={copied}
-                                    />
-                                    <button
-                                      type="button"
-                                      className="icon-button"
-                                      onClick={() => setOpenMessage(message)}
-                                      aria-label="Beautify and expand JSON"
-                                      title="Beautify and expand JSON"
-                                    >
-                                      <Braces size={15} />
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <EmptyMessage />
-                                  <span className="missing-reason">
-                                    No matching sender/module event
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
           </section>
         ) : view === "telemetry" ? (
           <section className="workspace reports-workspace">
