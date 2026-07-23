@@ -12,6 +12,7 @@ export type ReportField = {
 export type VeboOperatorSummary = {
   moduleId: number;
   operatorId: string;
+  operatorName?: string;
   validatorCount: number;
   nominalEth: number;
   validatorIndices: string[];

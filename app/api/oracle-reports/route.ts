@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Interface } from "ethers";
 
 import {
   type OracleModule,
+  type ParsedOracleReport,
   parseOracleReport,
 } from "../../oracle-reports";
 
@@ -16,6 +18,7 @@ type RpcResponse<T> = {
 const CONFIG = {
   mainnet: {
     explorer: "https://etherscan.io",
+    stakingRouter: "0xFdDf38947aFB03C621C71b06C9C70bce73f12999",
     rpcs: [
       "https://ethereum.publicnode.com",
       "https://eth-mainnet.g.alchemy.com/v2/demo",
@@ -29,6 +32,7 @@ const CONFIG = {
   },
   hoodi: {
     explorer: "https://hoodi.etherscan.io",
+    stakingRouter: "0xCc820558B39ee15C7C45B59390B503b83fb499A8",
     rpcs: [
       "https://rpc.hoodi.ethpandaops.io",
       "https://ethereum-hoodi-rpc.publicnode.com",
@@ -44,6 +48,19 @@ const CONFIG = {
 
 const PROCESSING_STARTED_TOPIC =
   "0xf73febded7d4502284718948a3e1d75406151c6326bde069424a584a4f6af87a";
+
+const STAKING_ROUTER = new Interface([
+  "function getStakingModule(uint256) view returns ((uint24 id,address stakingModuleAddress,uint16 stakingModuleFee,uint16 treasuryFee,uint16 stakeShareLimit,uint8 status,string name,uint64 lastDepositAt,uint256 lastDepositBlock,uint256 exitedValidatorsCount,uint16 priorityExitShareThreshold,uint64 maxDepositsPerBlock,uint64 minDepositBlockDistance))",
+]);
+const LEGACY_OPERATOR = new Interface([
+  "function getNodeOperator(uint256,bool) view returns (bool active,string name,address rewardAddress,uint64 totalVettedValidators,uint64 totalExitedValidators,uint64 totalAddedValidators,uint64 totalDepositedValidators)",
+]);
+const CURATED_MODULE = new Interface([
+  "function META_REGISTRY() view returns (address)",
+]);
+const META_REGISTRY = new Interface([
+  "function getOperatorMetadata(uint256) view returns ((string name,string description,bool ownerEditsRestricted))",
+]);
 
 async function explorerHashes(explorer: string, address: string) {
   const response = await fetch(`${explorer}/address/${address}`, {
@@ -141,6 +158,162 @@ async function rpcReportCandidates(
   );
 }
 
+async function resolveVeboOperatorNames(
+  rpcs: readonly string[],
+  stakingRouter: string,
+  reports: ParsedOracleReport[],
+) {
+  const operators = new Map<
+    string,
+    NonNullable<ParsedOracleReport["veboOperators"]>[number][]
+  >();
+  for (const report of reports) {
+    for (const operator of report.veboOperators ?? []) {
+      const key = `${operator.moduleId}:${operator.operatorId}`;
+      operators.set(key, [...(operators.get(key) ?? []), operator]);
+    }
+  }
+  if (!operators.size) return;
+
+  const moduleIds = [
+    ...new Set(
+      [...operators.keys()].map((key) => Number.parseInt(key.split(":")[0], 10)),
+    ),
+  ];
+  const moduleResults = await rpcBatch<string>(
+    rpcs,
+    "eth_call",
+    moduleIds.map((moduleId) => [
+      {
+        to: stakingRouter,
+        data: STAKING_ROUTER.encodeFunctionData("getStakingModule", [moduleId]),
+      },
+      "latest",
+    ]),
+  );
+  const moduleAddresses = new Map<number, string>();
+  moduleResults.forEach((result, index) => {
+    if (!result) return;
+    try {
+      const moduleState = STAKING_ROUTER.decodeFunctionResult(
+        "getStakingModule",
+        result,
+      )[0];
+      moduleAddresses.set(moduleIds[index], moduleState.stakingModuleAddress);
+    } catch {
+      // A missing module should not prevent the report itself from rendering.
+    }
+  });
+
+  const entries = [...operators.entries()].flatMap(([key, instances]) => {
+    const [moduleId, operatorId] = key.split(":");
+    const moduleAddress = moduleAddresses.get(Number.parseInt(moduleId, 10));
+    return moduleAddress
+      ? [{ key, moduleAddress, operatorId, instances }]
+      : [];
+  });
+  const legacyResults = await rpcBatch<string>(
+    rpcs,
+    "eth_call",
+    entries.map(({ moduleAddress, operatorId }) => [
+      {
+        to: moduleAddress,
+        data: LEGACY_OPERATOR.encodeFunctionData("getNodeOperator", [
+          operatorId,
+          true,
+        ]),
+      },
+      "latest",
+    ]),
+  );
+
+  const unresolved = entries.filter((entry, index) => {
+    const result = legacyResults[index];
+    if (!result) return true;
+    try {
+      const name = LEGACY_OPERATOR.decodeFunctionResult(
+        "getNodeOperator",
+        result,
+      ).name as string;
+      if (!name) return true;
+      entry.instances.forEach((operator) => {
+        operator.operatorName = name;
+      });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (!unresolved.length) return;
+
+  const registryResults = await rpcBatch<string>(
+    rpcs,
+    "eth_call",
+    unresolved.map(({ moduleAddress }) => [
+      {
+        to: moduleAddress,
+        data: CURATED_MODULE.encodeFunctionData("META_REGISTRY"),
+      },
+      "latest",
+    ]),
+  );
+  const metadataEntries = unresolved.flatMap((entry, index) => {
+    const result = registryResults[index];
+    if (!result) return [];
+    try {
+      const registry = CURATED_MODULE.decodeFunctionResult(
+        "META_REGISTRY",
+        result,
+      )[0] as string;
+      return [{ ...entry, registry }];
+    } catch {
+      return [];
+    }
+  });
+  const metadataResults = await rpcBatch<string>(
+    rpcs,
+    "eth_call",
+    metadataEntries.map(({ registry, operatorId }) => [
+      {
+        to: registry,
+        data: META_REGISTRY.encodeFunctionData("getOperatorMetadata", [
+          operatorId,
+        ]),
+      },
+      "latest",
+    ]),
+  );
+  metadataResults.forEach((result, index) => {
+    if (!result) return;
+    try {
+      const metadata = META_REGISTRY.decodeFunctionResult(
+        "getOperatorMetadata",
+        result,
+      )[0];
+      if (!metadata.name) return;
+      metadataEntries[index].instances.forEach((operator) => {
+        operator.operatorName = metadata.name;
+      });
+    } catch {
+      // Some staking modules intentionally expose no operator names.
+    }
+  });
+
+  for (const report of reports) {
+    if (!report.veboOperators) continue;
+    report.rawJson = JSON.stringify(
+      {
+        fields: Object.fromEntries(
+          report.fields.map((field) => [field.label, field.value]),
+        ),
+        operators: report.veboOperators,
+      },
+      null,
+      2,
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   const network = request.nextUrl.searchParams.get("network") as NetworkKey;
   if (network !== "mainnet" && network !== "hoodi") {
@@ -222,6 +395,11 @@ export async function GET(request: NextRequest) {
       )
       .filter((report) => report !== null)
       .sort((a, b) => b.blockNumber - a.blockNumber);
+    await resolveVeboOperatorNames(
+      config.rpcs,
+      config.stakingRouter,
+      reports,
+    );
 
     return NextResponse.json(
       {

@@ -1091,6 +1091,22 @@ p {
   font-family: var(--font-geist-mono), monospace;
 }
 
+.vebo-table td strong,
+.vebo-table td small {
+  display: block;
+}
+
+.vebo-table td strong {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.vebo-table td small {
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  margin-top: 2px;
+}
+
 .report-loading {
   margin-top: 32px;
 }

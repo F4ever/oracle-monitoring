@@ -612,16 +612,16 @@ function OracleReportInspector({
                   <th>Validators</th>
                   <th>Nominal ETH</th>
                   <th>Validator indices</th>
-                  {report.veboOperators.some(
-                    (operator) => operator.keyIndices.length,
-                  ) && <th>Key indices</th>}
                 </tr>
               </thead>
               <tbody>
                 {report.veboOperators.map((operator) => (
                   <tr key={`${operator.moduleId}-${operator.operatorId}`}>
                     <td>Module {operator.moduleId}</td>
-                    <td>Operator {operator.operatorId}</td>
+                    <td>
+                      <strong>{operator.operatorName || "Unnamed operator"}</strong>
+                      <small>Operator #{operator.operatorId}</small>
+                    </td>
                     <td>{operator.validatorCount}</td>
                     <td>{operator.nominalEth} ETH</td>
                     <td title={operator.validatorIndices.join(", ")}>
@@ -630,16 +630,6 @@ function OracleReportInspector({
                         ? ` +${operator.validatorIndices.length - 5}`
                         : ""}
                     </td>
-                    {report.veboOperators?.some(
-                      (item) => item.keyIndices.length,
-                    ) && (
-                      <td title={operator.keyIndices.join(", ")}>
-                        {operator.keyIndices.slice(0, 5).join(", ") || "-"}
-                        {operator.keyIndices.length > 5
-                          ? ` +${operator.keyIndices.length - 5}`
-                          : ""}
-                      </td>
-                    )}
                   </tr>
                 ))}
               </tbody>
