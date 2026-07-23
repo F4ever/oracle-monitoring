@@ -17,6 +17,7 @@ import {
   Copy,
   ExternalLink,
   FileJson,
+  ListTree,
   LoaderCircle,
   Maximize2,
   Radio,
@@ -27,8 +28,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import type { ParsedOracleReport } from "./oracle-reports";
+
 type NetworkKey = "mainnet" | "hoodi";
-type ViewKey = "overview" | "reports";
+type ViewKey = "overview" | "telemetry" | "oracle";
 type ModuleKey = "ao" | "vebo" | "csm" | "cm";
 
 type Member = {
@@ -60,6 +63,11 @@ type NetworkSnapshot = {
 };
 
 type Snapshot = Record<NetworkKey, NetworkSnapshot>;
+
+type OracleReportsPayload = {
+  contracts: Record<ModuleKey, string>;
+  reports: ParsedOracleReport[];
+};
 
 const MODULES: Array<{
   key: ModuleKey;
@@ -506,6 +514,143 @@ function EmptyMessage() {
   return <span className="empty-message">No message in 7d</span>;
 }
 
+function OracleReportInspector({
+  report,
+  explorer,
+  onCopied,
+}: {
+  report: ParsedOracleReport;
+  explorer: string;
+  onCopied: () => void;
+}) {
+  return (
+    <>
+      <header className="inspector-header">
+        <div>
+          <div className="eyebrow">Consensus report</div>
+          <h2>Block {report.blockNumber.toLocaleString()}</h2>
+        </div>
+        <div className="inspector-actions">
+          <CopyButton
+            value={report.rawJson}
+            onCopied={onCopied}
+            label="Copy decoded report"
+          />
+          <a
+            className="icon-button"
+            href={`${explorer}/tx/${report.transactionHash}`}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open transaction"
+            title="Open transaction"
+          >
+            <ExternalLink size={15} />
+          </a>
+        </div>
+      </header>
+
+      <div className="report-metadata">
+        <div>
+          <span>Module</span>
+          <ModulePill module={report.module} />
+        </div>
+        <div>
+          <span>Submitted by</span>
+          <strong>{LABELS[report.sender] ?? shorten(report.sender, 7, 5)}</strong>
+        </div>
+        <div>
+          <span>Observed</span>
+          <strong>{formatTime(report.timestamp)}</strong>
+        </div>
+        <div>
+          <span>Receiver</span>
+          <a
+            href={`${explorer}/address/${report.receiver}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {shorten(report.receiver, 8, 6)}
+            <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+
+      <div className="decoded-fields">
+        {report.fields.map((field) => (
+          <div className="decoded-field" key={field.label}>
+            <span>{field.label}</span>
+            <strong className={field.mono ? "mono" : ""}>{field.value}</strong>
+            <p>{field.description}</p>
+          </div>
+        ))}
+      </div>
+
+      {report.veboOperators && (
+        <section className="vebo-breakdown">
+          <header>
+            <div>
+              <h3>Exit demand by operator</h3>
+              <p>
+                Nominal ETH uses 32 ETH per validator; calldata does not include
+                live validator balances.
+              </p>
+            </div>
+            <strong>
+              {report.veboOperators.reduce(
+                (total, operator) => total + operator.nominalEth,
+                0,
+              )}{" "}
+              ETH
+            </strong>
+          </header>
+          <div className="vebo-table-scroll">
+            <table className="vebo-table">
+              <thead>
+                <tr>
+                  <th>Staking module</th>
+                  <th>Operator</th>
+                  <th>Validators</th>
+                  <th>Nominal ETH</th>
+                  <th>Validator indices</th>
+                  {report.veboOperators.some(
+                    (operator) => operator.keyIndices.length,
+                  ) && <th>Key indices</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {report.veboOperators.map((operator) => (
+                  <tr key={`${operator.moduleId}-${operator.operatorId}`}>
+                    <td>Module {operator.moduleId}</td>
+                    <td>Operator {operator.operatorId}</td>
+                    <td>{operator.validatorCount}</td>
+                    <td>{operator.nominalEth} ETH</td>
+                    <td title={operator.validatorIndices.join(", ")}>
+                      {operator.validatorIndices.slice(0, 5).join(", ")}
+                      {operator.validatorIndices.length > 5
+                        ? ` +${operator.validatorIndices.length - 5}`
+                        : ""}
+                    </td>
+                    {report.veboOperators?.some(
+                      (item) => item.keyIndices.length,
+                    ) && (
+                      <td title={operator.keyIndices.join(", ")}>
+                        {operator.keyIndices.slice(0, 5).join(", ") || "-"}
+                        {operator.keyIndices.length > 5
+                          ? ` +${operator.keyIndices.length - 5}`
+                          : ""}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
 export default function OracleMonitor() {
   const [network, setNetwork] = useState<NetworkKey>("mainnet");
   const [view, setView] = useState<ViewKey>("overview");
@@ -516,6 +661,16 @@ export default function OracleMonitor() {
   const [openMessage, setOpenMessage] = useState<BusMessage | null>(null);
   const [selectedReport, setSelectedReport] = useState<BusMessage | null>(null);
   const [moduleFilter, setModuleFilter] = useState<ModuleKey | "all">("all");
+  const [oracleModuleFilter, setOracleModuleFilter] = useState<
+    ModuleKey | "all"
+  >("all");
+  const [oraclePayloads, setOraclePayloads] = useState<
+    Partial<Record<NetworkKey, OracleReportsPayload>>
+  >({});
+  const [oracleLoading, setOracleLoading] = useState(false);
+  const [oracleError, setOracleError] = useState<string | null>(null);
+  const [selectedOracleReport, setSelectedOracleReport] =
+    useState<ParsedOracleReport | null>(null);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState(false);
 
@@ -545,6 +700,53 @@ export default function OracleMonitor() {
       window.clearInterval(timer);
     };
   }, [load]);
+
+  useEffect(() => {
+    if (view !== "oracle" || oraclePayloads[network]) return;
+    const controller = new AbortController();
+    const start = window.setTimeout(() => {
+      setOracleLoading(true);
+      setOracleError(null);
+      fetch(`/api/oracle-reports?network=${network}`, {
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          const payload = (await response.json()) as
+            | OracleReportsPayload
+            | { error?: string };
+          if (!response.ok || !("reports" in payload)) {
+            throw new Error(
+              "error" in payload && payload.error
+                ? payload.error
+                : "Unable to load oracle reports",
+            );
+          }
+          setOraclePayloads((current) => ({
+            ...current,
+            [network]: payload,
+          }));
+        })
+        .catch((loadError) => {
+          if (
+            loadError instanceof DOMException &&
+            loadError.name === "AbortError"
+          )
+            return;
+          setOracleError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Unable to load oracle reports",
+          );
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setOracleLoading(false);
+        });
+    }, 0);
+    return () => {
+      window.clearTimeout(start);
+      controller.abort();
+    };
+  }, [network, oraclePayloads, view]);
 
   const copied = useCallback(() => {
     setToast(true);
@@ -595,6 +797,18 @@ export default function OracleMonitor() {
   }, [data, moduleFilter, query]);
 
   const visibleReport = selectedReport ?? filteredReports[0] ?? null;
+  const oraclePayload = oraclePayloads[network];
+  const filteredOracleReports = useMemo(
+    () =>
+      (oraclePayload?.reports ?? []).filter(
+        (report) =>
+          oracleModuleFilter === "all" ||
+          report.module === oracleModuleFilter,
+      ),
+    [oracleModuleFilter, oraclePayload],
+  );
+  const visibleOracleReport =
+    selectedOracleReport ?? filteredOracleReports[0] ?? null;
 
   const explorer = NETWORKS[network].explorer;
 
@@ -620,10 +834,17 @@ export default function OracleMonitor() {
           </button>
           <button
             type="button"
-            className={view === "reports" ? "active" : ""}
-            onClick={() => setView("reports")}
+            className={view === "telemetry" ? "active" : ""}
+            onClick={() => setView("telemetry")}
           >
-            <FileJson size={16} /> Report details
+            <FileJson size={16} /> Telemetry details
+          </button>
+          <button
+            type="button"
+            className={view === "oracle" ? "active" : ""}
+            onClick={() => setView("oracle")}
+          >
+            <ListTree size={16} /> Oracle reports
           </button>
         </nav>
         <div className="top-actions">
@@ -633,10 +854,22 @@ export default function OracleMonitor() {
           <button
             className="refresh-button"
             type="button"
-            onClick={() => void load()}
-            disabled={loading}
+            onClick={() => {
+              void load();
+              if (view === "oracle") {
+                setOraclePayloads((current) => {
+                  const next = { ...current };
+                  delete next[network];
+                  return next;
+                });
+              }
+            }}
+            disabled={loading || oracleLoading}
           >
-            <RefreshCw className={loading ? "spin" : ""} size={16} />
+            <RefreshCw
+              className={loading || oracleLoading ? "spin" : ""}
+              size={16}
+            />
             Refresh
           </button>
         </div>
@@ -652,6 +885,7 @@ export default function OracleMonitor() {
               onClick={() => {
                 setNetwork(key);
                 setSelectedReport(null);
+                setSelectedOracleReport(null);
               }}
             >
               <span className={`network-dot ${key}`} />
@@ -900,14 +1134,14 @@ export default function OracleMonitor() {
               </div>
             </section>
           </section>
-        ) : (
+        ) : view === "telemetry" ? (
           <section className="workspace reports-workspace">
             <div className="reports-heading">
               <div>
                 <div className="eyebrow">
                   {NETWORKS[network].label} · block by block
                 </div>
-                <h1>Report details</h1>
+                <h1>Telemetry details</h1>
                 <p>
                   Inspect every captured AO, VEBO, CSM, and CM telemetry payload
                   in descending block order.
@@ -915,7 +1149,7 @@ export default function OracleMonitor() {
               </div>
               <div className="reports-count">
                 <strong>{filteredReports.length}</strong>
-                <span>matching reports</span>
+                <span>matching messages</span>
               </div>
             </div>
 
@@ -1075,6 +1309,165 @@ export default function OracleMonitor() {
               </aside>
             </div>
           </section>
+        ) : (
+          <section className="workspace reports-workspace oracle-workspace">
+            <div className="reports-heading">
+              <div>
+                <div className="eyebrow">
+                  {NETWORKS[network].label} · receiver transactions
+                </div>
+                <h1>Onchain oracle reports</h1>
+                <p>
+                  Decoded submitReportData transactions received by Accounting
+                  Oracle, VEBO, CSM FeeOracle, and CM v2 FeeOracle.
+                </p>
+              </div>
+              <div className="reports-count">
+                <strong>{filteredOracleReports.length}</strong>
+                <span>decoded reports</span>
+              </div>
+            </div>
+
+            {oraclePayload && (
+              <div className="receiver-strip" aria-label="Oracle receivers">
+                {MODULES.map(({ key, full }) => (
+                  <a
+                    key={key}
+                    href={`${explorer}/address/${oraclePayload.contracts[key]}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ModulePill module={key} />
+                    <span>
+                      <strong>{full}</strong>
+                      <small>{shorten(oraclePayload.contracts[key], 7, 5)}</small>
+                    </span>
+                    <ExternalLink size={12} />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            <div className="report-controls">
+              <div className="module-filter" aria-label="Filter oracle reports">
+                {(["all", "ao", "vebo", "csm", "cm"] as const).map((key) => (
+                  <button
+                    type="button"
+                    key={key}
+                    className={oracleModuleFilter === key ? "active" : ""}
+                    onClick={() => {
+                      setOracleModuleFilter(key);
+                      setSelectedOracleReport(null);
+                    }}
+                  >
+                    {key === "all" ? "All modules" : key.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <span className="range-chip">latest explorer activity</span>
+            </div>
+
+            {oracleLoading && !oraclePayload ? (
+              <div className="loading-state report-loading" role="status">
+                <LoaderCircle className="spin" size={22} />
+                <div>
+                  <strong>Decoding receiver transactions</strong>
+                  <span>Reading calldata and resolving block timestamps</span>
+                </div>
+              </div>
+            ) : oracleError && !oraclePayload ? (
+              <section className="error-state">
+                <AlertTriangle size={22} />
+                <div>
+                  <strong>Could not read oracle reports</strong>
+                  <span>{oracleError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOracleError(null);
+                    setOraclePayloads((current) => ({ ...current }));
+                  }}
+                >
+                  Try again
+                </button>
+              </section>
+            ) : (
+              <div className="reports-layout oracle-reports-layout">
+                <section className="report-ledger" aria-label="Oracle report ledger">
+                  <header className="ledger-header">
+                    <span>Block / module</span>
+                    <span>Submitter</span>
+                    <span>Age</span>
+                  </header>
+                  <div className="ledger-rows">
+                    {filteredOracleReports.length ? (
+                      filteredOracleReports.map((report) => {
+                        const ageSeconds = Math.max(
+                          0,
+                          Math.floor((updatedAt?.getTime() ?? 0) / 1000) -
+                            report.timestamp,
+                        );
+                        return (
+                          <button
+                            type="button"
+                            key={report.transactionHash}
+                            className={
+                              visibleOracleReport?.transactionHash ===
+                              report.transactionHash
+                                ? "active"
+                                : ""
+                            }
+                            onClick={() => setSelectedOracleReport(report)}
+                          >
+                            <span className="ledger-block">
+                              <strong>#{report.blockNumber.toLocaleString()}</strong>
+                              <ModulePill module={report.module} />
+                            </span>
+                            <span className="ledger-sender">
+                              <strong>
+                                {LABELS[report.sender] ?? "Authorized submitter"}
+                              </strong>
+                              <small>slot {report.refSlot.toLocaleString()}</small>
+                            </span>
+                            <span className="ledger-age">
+                              {relativeTime(ageSeconds)}
+                            </span>
+                            <ChevronRight size={15} />
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="no-results">
+                        <ListTree size={20} />
+                        <strong>No decoded reports in this filter</strong>
+                        <span>
+                          The receiver may not have recent submitReportData
+                          activity.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <aside className="report-inspector oracle-inspector">
+                  {visibleOracleReport ? (
+                    <OracleReportInspector
+                      report={visibleOracleReport}
+                      explorer={explorer}
+                      onCopied={copied}
+                    />
+                  ) : (
+                    <div className="inspector-empty">
+                      <ServerCog size={24} />
+                      <strong>Select an oracle report</strong>
+                      <span>Its decoded fields will appear here.</span>
+                    </div>
+                  )}
+                </aside>
+              </div>
+            )}
+          </section>
         )
       ) : null}
 
@@ -1095,7 +1488,8 @@ export default function OracleMonitor() {
           <Clock3 size={13} /> Auto-refreshes every 5 minutes
         </span>
         <span>
-          Membership: HashConsensus · Telemetry: Hoodi DataBus
+          Membership: HashConsensus · Telemetry: DataBus · Reports: receiver
+          calldata
         </span>
       </footer>
     </main>

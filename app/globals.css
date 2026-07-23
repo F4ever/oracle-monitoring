@@ -103,6 +103,8 @@ input:focus-visible {
 .modal-actions,
 .inspector-header,
 .inspector-actions,
+.receiver-strip a,
+.vebo-breakdown > header,
 .app-footer,
 .app-footer span {
   display: flex;
@@ -773,6 +775,57 @@ p {
   min-height: 630px;
 }
 
+.receiver-strip {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.receiver-strip a {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  gap: 9px;
+  min-width: 0;
+  padding: 10px 11px;
+  text-decoration: none;
+}
+
+.receiver-strip a:hover {
+  border-color: var(--line-strong);
+}
+
+.receiver-strip a > span:nth-child(2) {
+  min-width: 0;
+}
+
+.receiver-strip strong,
+.receiver-strip small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receiver-strip strong {
+  font-size: 10px;
+}
+
+.receiver-strip small {
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  margin-top: 3px;
+}
+
+.receiver-strip svg {
+  color: var(--muted);
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .report-ledger,
 .report-inspector {
   background: var(--surface);
@@ -931,6 +984,115 @@ p {
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.oracle-inspector {
+  max-height: 820px;
+  overflow-y: auto;
+}
+
+.decoded-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.decoded-field {
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  padding: 14px 16px;
+}
+
+.decoded-field:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+.decoded-field > span {
+  color: var(--muted);
+  display: block;
+  font-size: 8px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.decoded-field strong {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.decoded-field strong.mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.decoded-field p {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  margin-top: 5px;
+}
+
+.vebo-breakdown {
+  padding: 17px 16px 20px;
+}
+
+.vebo-breakdown > header {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.vebo-breakdown h3 {
+  font-size: 12px;
+}
+
+.vebo-breakdown p {
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 4px;
+}
+
+.vebo-breakdown > header > strong {
+  color: var(--green);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.vebo-table-scroll {
+  overflow-x: auto;
+}
+
+.vebo-table {
+  border-collapse: collapse;
+  font-size: 9px;
+  min-width: 620px;
+  width: 100%;
+}
+
+.vebo-table th,
+.vebo-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 8px;
+  text-align: left;
+}
+
+.vebo-table th {
+  background: #f6f8f5;
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.vebo-table td:last-child {
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.report-loading {
+  margin-top: 32px;
 }
 
 .json-view {
@@ -1126,7 +1288,7 @@ p {
 
   .view-tabs button {
     justify-content: center;
-    width: 50%;
+    width: 33.333%;
   }
 
   .summary-band {
@@ -1143,6 +1305,10 @@ p {
 
   .reports-layout {
     grid-template-columns: 1fr;
+  }
+
+  .receiver-strip {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -1269,6 +1435,14 @@ p {
     row-gap: 14px;
   }
 
+  .decoded-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .decoded-field:nth-child(odd) {
+    border-right: 0;
+  }
+
   .ledger-header {
     grid-template-columns: 1fr 1fr 72px;
   }
@@ -1301,6 +1475,16 @@ p {
 
   .panel-header {
     padding: 13px 14px;
+  }
+
+  .view-tabs button {
+    font-size: 9px;
+    gap: 5px;
+    padding: 0 7px;
+  }
+
+  .receiver-strip {
+    grid-template-columns: 1fr;
   }
 
   .message-line {

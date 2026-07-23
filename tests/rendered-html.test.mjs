@@ -32,6 +32,7 @@ test("server-renders the oracle monitor shell", async () => {
   assert.match(html, /Lido Oracle Watch/);
   assert.match(html, /Onchain operations console/);
   assert.match(html, /Overview/);
-  assert.match(html, /Report details/);
+  assert.match(html, /Telemetry details/);
+  assert.match(html, /Oracle reports/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
