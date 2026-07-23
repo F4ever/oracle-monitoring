@@ -749,15 +749,10 @@ export default function OracleMonitor() {
                           {module.label}
                         </th>
                       ))}
-                      <th>Coverage</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.members.map((member) => {
-                      const coverage = MODULES.filter(
-                        ({ key }) => member.lastSlots[key] !== undefined,
-                      ).length;
-                      return (
+                    {data.members.map((member) => (
                         <tr key={member.address}>
                           <td>
                             <div className="member-cell">
@@ -806,16 +801,8 @@ export default function OracleMonitor() {
                               </td>
                             );
                           })}
-                          <td>
-                            <span
-                              className={`coverage ${coverage === 4 ? "full" : ""}`}
-                            >
-                              {coverage}/4
-                            </span>
-                          </td>
                         </tr>
-                      );
-                    })}
+                    ))}
                   </tbody>
                 </table>
               </div>
