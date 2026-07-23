@@ -47,10 +47,16 @@ type BusMessage = {
   timestamp: number;
 };
 
+type ChainConfig = {
+  secondsPerSlot: number;
+  genesisTime: number;
+};
+
 type NetworkSnapshot = {
   members: Member[];
   blockNumber: number;
   messages: BusMessage[];
+  chainConfig: ChainConfig;
 };
 
 type Snapshot = Record<NetworkKey, NetworkSnapshot>;
@@ -102,6 +108,7 @@ const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
 const STALE_SECONDS = 24 * 60 * 60;
 const MEMBER_ABI = [
   "function getMembers() view returns (address[] addresses, uint256[] lastReportedRefSlots)",
+  "function getChainConfig() view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)",
 ];
 
 const LABELS: Record<string, string> = {
@@ -152,6 +159,33 @@ function relativeTime(seconds: number) {
   if (seconds < 3600) return `${plural(Math.floor(seconds / 60), "min")} ago`;
   if (seconds < 86400) return `${plural(Math.floor(seconds / 3600), "hr")} ago`;
   return `${plural(Math.floor(seconds / 86400), "day")} ago`;
+}
+
+function relativeReportTime(seconds: number) {
+  if (seconds < 60) return "reported less than a minute ago";
+  if (seconds < 3600) {
+    return `reported ${plural(Math.floor(seconds / 60), "minute")} ago`;
+  }
+  if (seconds < 86400) {
+    return `reported ${plural(Math.floor(seconds / 3600), "hour")} ago`;
+  }
+  return `reported ${plural(Math.floor(seconds / 86400), "day")} ago`;
+}
+
+function slotReportDetails(slot: number, chainConfig: ChainConfig) {
+  if (slot === 0) {
+    return {
+      label: "No report yet",
+      timestamp: "This member has not reported for this module",
+    };
+  }
+
+  const timestamp = chainConfig.genesisTime + slot * chainConfig.secondsPerSlot;
+  const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
+  return {
+    label: relativeReportTime(ageSeconds),
+    timestamp: new Date(timestamp * 1000).toLocaleString(),
+  };
 }
 
 function formatTime(timestamp: number) {
@@ -260,11 +294,21 @@ async function fetchMembers(
       merged.set(value.address, member);
     }
   }
-  return [...merged.values()].sort((a, b) =>
-    (LABELS[a.address] ?? a.address).localeCompare(
-      LABELS[b.address] ?? b.address,
+
+  const chainContract = new Contract(contracts.ao, MEMBER_ABI, provider);
+  const [, secondsPerSlot, genesisTime] = await chainContract.getChainConfig();
+
+  return {
+    members: [...merged.values()].sort((a, b) =>
+      (LABELS[a.address] ?? a.address).localeCompare(
+        LABELS[b.address] ?? b.address,
+      ),
     ),
-  );
+    chainConfig: {
+      secondsPerSlot: Number(secondsPerSlot),
+      genesisTime: Number(genesisTime),
+    },
+  };
 }
 
 async function fetchDataBus(provider: JsonRpcProvider) {
@@ -321,7 +365,13 @@ async function fetchSnapshot(): Promise<Snapshot> {
     connect(NETWORKS.mainnet.rpc),
     connect(NETWORKS.hoodi.rpc),
   ]);
-  const [mainnetMembers, hoodiMembers, mainnetBlock, hoodiBlock, messages] =
+  const [
+    mainnetMembership,
+    hoodiMembership,
+    mainnetBlock,
+    hoodiBlock,
+    messages,
+  ] =
     await Promise.all([
       fetchMembers(mainnetProvider, NETWORKS.mainnet.consensus),
       fetchMembers(hoodiProvider, NETWORKS.hoodi.consensus),
@@ -330,18 +380,24 @@ async function fetchSnapshot(): Promise<Snapshot> {
       fetchDataBus(hoodiProvider),
     ]);
 
-  const mainnetSet = new Set(mainnetMembers.map((member) => member.address));
-  const hoodiSet = new Set(hoodiMembers.map((member) => member.address));
+  const mainnetSet = new Set(
+    mainnetMembership.members.map((member) => member.address),
+  );
+  const hoodiSet = new Set(
+    hoodiMembership.members.map((member) => member.address),
+  );
   return {
     mainnet: {
-      members: mainnetMembers,
+      members: mainnetMembership.members,
       blockNumber: mainnetBlock,
       messages: messages.filter((message) => mainnetSet.has(message.sender)),
+      chainConfig: mainnetMembership.chainConfig,
     },
     hoodi: {
-      members: hoodiMembers,
+      members: hoodiMembership.members,
       blockNumber: hoodiBlock,
       messages: messages.filter((message) => hoodiSet.has(message.sender)),
+      chainConfig: hoodiMembership.chainConfig,
     },
   };
 }
@@ -725,13 +781,25 @@ export default function OracleMonitor() {
                           </td>
                           {MODULES.map(({ key }) => {
                             const slot = member.lastSlots[key];
+                            const report =
+                              slot !== undefined
+                                ? slotReportDetails(slot, data.chainConfig)
+                                : null;
                             return (
                               <td key={key}>
-                                {slot !== undefined ? (
-                                  <span className="slot-ok">
-                                    <CheckCircle2 size={15} />
-                                    {slot.toLocaleString()}
-                                  </span>
+                                {slot !== undefined && report ? (
+                                  <div
+                                    className={`slot-cell ${slot === 0 ? "never-reported" : ""}`}
+                                    title={report.timestamp}
+                                  >
+                                    <span className="slot-ok">
+                                      <CheckCircle2 size={15} />
+                                      {slot.toLocaleString()}
+                                    </span>
+                                    <span className="slot-relative">
+                                      {report.label}
+                                    </span>
+                                  </div>
                                 ) : (
                                   <span className="slot-missing">—</span>
                                 )}
