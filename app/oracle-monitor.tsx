@@ -183,6 +183,7 @@ function relativeReportTime(seconds: number) {
 function slotReportDetails(slot: number, chainConfig: ChainConfig) {
   if (slot === 0) {
     return {
+      ageSeconds: Number.POSITIVE_INFINITY,
       label: "No report yet",
       timestamp: "This member has not reported for this module",
     };
@@ -191,6 +192,7 @@ function slotReportDetails(slot: number, chainConfig: ChainConfig) {
   const timestamp = chainConfig.genesisTime + slot * chainConfig.secondsPerSlot;
   const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
   return {
+    ageSeconds,
     label: relativeReportTime(ageSeconds),
     timestamp: new Date(timestamp * 1000).toLocaleString(),
   };
@@ -956,7 +958,10 @@ export default function OracleMonitor() {
                 </div>
                 <div className="legend">
                   <span>
-                    <i className="legend-good" /> participating
+                    <i className="legend-good" /> within 24h
+                  </span>
+                  <span>
+                    <i className="legend-overdue" /> over 24h
                   </span>
                   <span>
                     <i className="legend-missing" /> not present
@@ -1008,7 +1013,11 @@ export default function OracleMonitor() {
                               <td key={key}>
                                 {slot !== undefined && report ? (
                                   <div
-                                    className={`slot-cell ${slot === 0 ? "never-reported" : ""}`}
+                                    className={`slot-cell ${
+                                      report.ageSeconds <= STALE_SECONDS
+                                        ? "recent"
+                                        : "overdue"
+                                    }`}
                                     title={report.timestamp}
                                   >
                                     <span className="slot-ok">
