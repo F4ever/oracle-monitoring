@@ -439,14 +439,29 @@ p {
   width: 26%;
 }
 
-.participation-table th:not(:first-child):not(:last-child),
-.participation-table td:not(:first-child):not(:last-child) {
+.participation-table .module-column {
   width: 14%;
 }
 
-.participation-table th:last-child,
-.participation-table td:last-child {
+.participation-table .balance-column {
   width: 18%;
+}
+
+.participation-table.with-dual-balances {
+  min-width: 1120px;
+}
+
+.participation-table.with-dual-balances th:first-child,
+.participation-table.with-dual-balances td:first-child {
+  width: 22%;
+}
+
+.participation-table.with-dual-balances .module-column {
+  width: 12%;
+}
+
+.participation-table.with-dual-balances .balance-column {
+  width: 15%;
 }
 
 .participation-table tr:last-child td {

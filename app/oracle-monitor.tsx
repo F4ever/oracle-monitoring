@@ -37,6 +37,8 @@ type ModuleKey = "ao" | "vebo" | "csm" | "cm";
 type Member = {
   address: string;
   balanceEth: number;
+  hoodiAddress?: string;
+  hoodiBalanceEth?: number;
   lastSlots: Partial<Record<ModuleKey, number>>;
 };
 
@@ -115,7 +117,7 @@ const NETWORKS = {
 const DATABUS = "0x37De961D6bb5865867aDd416be07189D2Dd960e6";
 const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
 const STALE_SECONDS = 24 * 60 * 60;
-const LOW_BALANCE_ETH = 0.1;
+const LOW_BALANCE_ETH = 1;
 const MEMBER_ABI = [
   "function getMembers() view returns (address[] addresses, uint256[] lastReportedRefSlots)",
   "function getChainConfig() view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)",
@@ -390,11 +392,39 @@ async function fetchSnapshot(): Promise<Snapshot> {
   const hoodiSet = new Set(
     hoodiMembership.members.map((member) => member.address),
   );
+  const hoodiByOrganization = new Map(
+    hoodiMembership.members.flatMap((member) => {
+      const label = LABELS[member.address];
+      return label ? [[label, member] as const] : [];
+    }),
+  );
+  const mainnetAddressByOrganization = new Map(
+    mainnetMembership.members.flatMap((member) => {
+      const label = LABELS[member.address];
+      return label ? [[label, member.address] as const] : [];
+    }),
+  );
+  mainnetMembership.members.forEach((member) => {
+    const label = LABELS[member.address];
+    const hoodiMember = label ? hoodiByOrganization.get(label) : undefined;
+    if (!hoodiMember) return;
+    member.hoodiAddress = hoodiMember.address;
+    member.hoodiBalanceEth = hoodiMember.balanceEth;
+  });
+  const mainnetMessages = messages.flatMap((message) => {
+    const label = LABELS[message.sender];
+    const mainnetAddress = label
+      ? mainnetAddressByOrganization.get(label)
+      : undefined;
+    return mainnetAddress ? [{ ...message, sender: mainnetAddress }] : [];
+  });
   return {
     mainnet: {
       members: mainnetMembership.members,
       blockNumber: mainnetBlock,
-      messages: messages.filter((message) => mainnetSet.has(message.sender)),
+      messages: mainnetMessages.filter((message) =>
+        mainnetSet.has(message.sender),
+      ),
       chainConfig: mainnetMembership.chainConfig,
     },
     hoodi: {
@@ -410,6 +440,29 @@ function ModulePill({ module }: { module: ModuleKey | "unknown" }) {
   const label =
     MODULES.find((item) => item.key === module)?.label ?? "Unknown";
   return <span className={`module-pill module-${module}`}>{label}</span>;
+}
+
+function BalanceCell({
+  balanceEth,
+  walletAddress,
+}: {
+  balanceEth?: number;
+  walletAddress?: string;
+}) {
+  const low = balanceEth === undefined || balanceEth < LOW_BALANCE_ETH;
+  return (
+    <div
+      className={`balance-cell ${low ? "low" : "funded"}`}
+      title={walletAddress ? `Wallet ${walletAddress}` : "Wallet unavailable"}
+    >
+      <strong>
+        {balanceEth === undefined
+          ? "Unavailable"
+          : `${formatBalance(balanceEth)} ETH`}
+      </strong>
+      <span>{low ? `Below ${LOW_BALANCE_ETH} ETH` : "Funded"}</span>
+    </div>
+  );
 }
 
 function CopyButton({
@@ -761,13 +814,29 @@ export default function OracleMonitor() {
       );
     }, 0);
   }, [data, memberMessages]);
-  const lowestBalance =
-    data?.members.length
-      ? Math.min(...data.members.map((member) => member.balanceEth))
+  const trackedBalances =
+    data?.members.flatMap((member) =>
+      network === "mainnet"
+        ? [
+            member.balanceEth,
+            ...(member.hoodiBalanceEth === undefined
+              ? []
+              : [member.hoodiBalanceEth]),
+          ]
+        : [member.balanceEth],
+    ) ?? [];
+  const lowestBalance = trackedBalances.length
+    ? Math.min(...trackedBalances)
+    : 0;
+  const missingHoodiBalanceCount =
+    network === "mainnet"
+      ? (data?.members.filter(
+          (member) => member.hoodiBalanceEth === undefined,
+        ).length ?? 0)
       : 0;
   const lowBalanceCount =
-    data?.members.filter((member) => member.balanceEth < LOW_BALANCE_ETH)
-      .length ?? 0;
+    trackedBalances.filter((balance) => balance < LOW_BALANCE_ETH).length +
+    missingHoodiBalanceCount;
 
   const filteredReports = useMemo(() => {
     if (!data) return [];
@@ -940,7 +1009,9 @@ export default function OracleMonitor() {
                 <small>
                   ETH ·{" "}
                   {lowBalanceCount
-                    ? `${lowBalanceCount} below ${LOW_BALANCE_ETH} ETH`
+                    ? `${lowBalanceCount} wallet${
+                        lowBalanceCount === 1 ? "" : "s"
+                      } below ${LOW_BALANCE_ETH} ETH`
                     : "all wallets funded"}
                 </small>
               </div>
@@ -969,16 +1040,29 @@ export default function OracleMonitor() {
                 </div>
               </header>
               <div className="table-scroll">
-                <table className="participation-table">
+                <table
+                  className={`participation-table ${
+                    network === "mainnet" ? "with-dual-balances" : ""
+                  }`}
+                >
                   <thead>
                     <tr>
                       <th>Oracle member</th>
                       {MODULES.map((module) => (
-                        <th key={module.key} title={module.full}>
+                        <th
+                          className="module-column"
+                          key={module.key}
+                          title={module.full}
+                        >
                           {module.label}
                         </th>
                       ))}
-                      <th>Wallet balance</th>
+                      <th className="balance-column">
+                        {network === "mainnet" ? "Ethereum" : "Hoodi"} balance
+                      </th>
+                      {network === "mainnet" && (
+                        <th className="balance-column">Hoodi balance</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -1049,22 +1133,20 @@ export default function OracleMonitor() {
                               </td>
                             );
                           })}
-                          <td>
-                            <div
-                              className={`balance-cell ${
-                                member.balanceEth < LOW_BALANCE_ETH
-                                  ? "low"
-                                  : "funded"
-                              }`}
-                            >
-                              <strong>{formatBalance(member.balanceEth)} ETH</strong>
-                              <span>
-                                {member.balanceEth < LOW_BALANCE_ETH
-                                  ? "Low balance"
-                                  : "Funded"}
-                              </span>
-                            </div>
+                          <td className="balance-column">
+                            <BalanceCell
+                              balanceEth={member.balanceEth}
+                              walletAddress={member.address}
+                            />
                           </td>
+                          {network === "mainnet" && (
+                            <td className="balance-column">
+                              <BalanceCell
+                                balanceEth={member.hoodiBalanceEth}
+                                walletAddress={member.hoodiAddress}
+                              />
+                            </td>
+                          )}
                         </tr>
                     ))}
                   </tbody>
