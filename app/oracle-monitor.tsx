@@ -3,6 +3,7 @@
 import {
   AbiCoder,
   Contract,
+  formatEther,
   JsonRpcProvider,
   type Log,
 } from "ethers";
@@ -35,6 +36,7 @@ type ModuleKey = "ao" | "vebo" | "csm" | "cm";
 
 type Member = {
   address: string;
+  balanceEth: number;
   lastSlots: Partial<Record<ModuleKey, number>>;
 };
 
@@ -113,6 +115,7 @@ const NETWORKS = {
 const DATABUS = "0x37De961D6bb5865867aDd416be07189D2Dd960e6";
 const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
 const STALE_SECONDS = 24 * 60 * 60;
+const LOW_BALANCE_ETH = 0.1;
 const MEMBER_ABI = [
   "function getMembers() view returns (address[] addresses, uint256[] lastReportedRefSlots)",
   "function getChainConfig() view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)",
@@ -166,6 +169,14 @@ function relativeTime(seconds: number) {
   if (seconds < 3600) return `${plural(Math.floor(seconds / 60), "min")} ago`;
   if (seconds < 86400) return `${plural(Math.floor(seconds / 3600), "hr")} ago`;
   return `${plural(Math.floor(seconds / 86400), "day")} ago`;
+}
+
+function formatBalance(balanceEth: number) {
+  if (balanceEth === 0) return "0";
+  if (balanceEth < 0.0001) return "<0.0001";
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: balanceEth < 1 ? 4 : 3,
+  }).format(balanceEth);
 }
 
 function formatTime(timestamp: number) {
@@ -268,6 +279,7 @@ async function fetchMembers(
     for (const value of result.values) {
       const member = merged.get(value.address) ?? {
         address: value.address,
+        balanceEth: 0,
         lastSlots: {},
       };
       member.lastSlots[result.key] = value.slot;
@@ -276,7 +288,19 @@ async function fetchMembers(
   }
 
   const chainContract = new Contract(contracts.ao, MEMBER_ABI, provider);
-  const [, secondsPerSlot, genesisTime] = await chainContract.getChainConfig();
+  const [[, secondsPerSlot, genesisTime], balances] = await Promise.all([
+    chainContract.getChainConfig(),
+    Promise.all(
+      [...merged.values()].map(async (member) => ({
+        address: member.address,
+        balanceEth: Number(formatEther(await provider.getBalance(member.address))),
+      })),
+    ),
+  ]);
+  balances.forEach(({ address, balanceEth }) => {
+    const member = merged.get(address);
+    if (member) member.balanceEth = balanceEth;
+  });
 
   return {
     members: [...merged.values()].sort((a, b) =>
@@ -476,7 +500,7 @@ function LoadingState() {
       <LoaderCircle className="spin" size={22} />
       <div>
         <strong>Reading onchain state</strong>
-        <span>Members, module slots, and seven days of DataBus messages</span>
+        <span>Members, wallet balances, and seven days of DataBus telemetry</span>
       </div>
     </div>
   );
@@ -737,6 +761,13 @@ export default function OracleMonitor() {
       );
     }, 0);
   }, [data, memberMessages]);
+  const lowestBalance =
+    data?.members.length
+      ? Math.min(...data.members.map((member) => member.balanceEth))
+      : 0;
+  const lowBalanceCount =
+    data?.members.filter((member) => member.balanceEth < LOW_BALANCE_ETH)
+      .length ?? 0;
 
   const filteredReports = useMemo(() => {
     if (!data) return [];
@@ -901,10 +932,17 @@ export default function OracleMonitor() {
                 <strong>{data.members.length}</strong>
                 <small>authoritative set</small>
               </div>
-              <div className="metric">
-                <span>Messages</span>
-                <strong>{data.messages.length}</strong>
-                <small>last 7 days</small>
+              <div
+                className={`metric ${lowBalanceCount ? "warning" : "healthy"}`}
+              >
+                <span>Lowest balance</span>
+                <strong>{formatBalance(lowestBalance)}</strong>
+                <small>
+                  ETH ·{" "}
+                  {lowBalanceCount
+                    ? `${lowBalanceCount} below ${LOW_BALANCE_ETH} ETH`
+                    : "all wallets funded"}
+                </small>
               </div>
               <div className={`metric ${staleCount ? "warning" : "healthy"}`}>
                 <span>24h breaches</span>
@@ -940,6 +978,7 @@ export default function OracleMonitor() {
                           {module.label}
                         </th>
                       ))}
+                      <th>Wallet balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1010,6 +1049,22 @@ export default function OracleMonitor() {
                               </td>
                             );
                           })}
+                          <td>
+                            <div
+                              className={`balance-cell ${
+                                member.balanceEth < LOW_BALANCE_ETH
+                                  ? "low"
+                                  : "funded"
+                              }`}
+                            >
+                              <strong>{formatBalance(member.balanceEth)} ETH</strong>
+                              <span>
+                                {member.balanceEth < LOW_BALANCE_ETH
+                                  ? "Low balance"
+                                  : "Funded"}
+                              </span>
+                            </div>
+                          </td>
                         </tr>
                     ))}
                   </tbody>
