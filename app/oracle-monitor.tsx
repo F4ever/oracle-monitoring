@@ -46,6 +46,7 @@ type BusMessage = {
   blockNumber: number;
   transactionHash: string;
   sender: string;
+  chainId: number | null;
   module: ModuleKey | "unknown";
   raw: string;
   pretty: string;
@@ -116,6 +117,8 @@ const NETWORKS = {
 
 const DATABUS = "0x37De961D6bb5865867aDd416be07189D2Dd960e6";
 const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
+const MAINNET_CHAIN_ID = 1;
+const HOODI_CHAIN_ID = 560_048;
 const STALE_SECONDS = 24 * 60 * 60;
 const LOW_BALANCE_ETH = 1;
 const MEMBER_ABI = [
@@ -196,6 +199,18 @@ function safeJson(text: string) {
   } catch {
     return text;
   }
+}
+
+function chainIdFromMessage(raw: string) {
+  try {
+    const value = (JSON.parse(raw) as { chain_id?: unknown }).chain_id;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && /^\d+$/.test(value))
+      return Number(value);
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function decodeBytes(data: string) {
@@ -356,6 +371,7 @@ async function fetchDataBus(provider: JsonRpcProvider) {
         blockNumber: log.blockNumber,
         transactionHash: log.transactionHash,
         sender,
+        chainId: chainIdFromMessage(raw),
         module: moduleFromMessage(raw, log.topics[0] ?? ""),
         raw,
         pretty: safeJson(raw),
@@ -398,12 +414,6 @@ async function fetchSnapshot(): Promise<Snapshot> {
       return label ? [[label, member] as const] : [];
     }),
   );
-  const mainnetAddressByOrganization = new Map(
-    mainnetMembership.members.flatMap((member) => {
-      const label = LABELS[member.address];
-      return label ? [[label, member.address] as const] : [];
-    }),
-  );
   mainnetMembership.members.forEach((member) => {
     const label = LABELS[member.address];
     const hoodiMember = label ? hoodiByOrganization.get(label) : undefined;
@@ -411,26 +421,24 @@ async function fetchSnapshot(): Promise<Snapshot> {
     member.hoodiAddress = hoodiMember.address;
     member.hoodiBalanceEth = hoodiMember.balanceEth;
   });
-  const mainnetMessages = messages.flatMap((message) => {
-    const label = LABELS[message.sender];
-    const mainnetAddress = label
-      ? mainnetAddressByOrganization.get(label)
-      : undefined;
-    return mainnetAddress ? [{ ...message, sender: mainnetAddress }] : [];
-  });
   return {
     mainnet: {
       members: mainnetMembership.members,
       blockNumber: mainnetBlock,
-      messages: mainnetMessages.filter((message) =>
-        mainnetSet.has(message.sender),
+      messages: messages.filter(
+        (message) =>
+          message.chainId === MAINNET_CHAIN_ID &&
+          mainnetSet.has(message.sender),
       ),
       chainConfig: mainnetMembership.chainConfig,
     },
     hoodi: {
       members: hoodiMembership.members,
       blockNumber: hoodiBlock,
-      messages: messages.filter((message) => hoodiSet.has(message.sender)),
+      messages: messages.filter(
+        (message) =>
+          message.chainId === HOODI_CHAIN_ID && hoodiSet.has(message.sender),
+      ),
       chainConfig: hoodiMembership.chainConfig,
     },
   };
