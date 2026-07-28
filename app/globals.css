@@ -84,6 +84,7 @@ input:focus-visible {
 .top-actions,
 .chain-state,
 .refresh-button,
+.route-button,
 .view-tabs,
 .view-tabs button,
 .network-switch,
@@ -176,6 +177,17 @@ input:focus-visible {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   color: var(--ink);
+  cursor: pointer;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+}
+
+.route-button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  color: #fff;
   cursor: pointer;
   gap: 7px;
   height: 34px;

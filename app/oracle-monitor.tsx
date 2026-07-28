@@ -26,6 +26,7 @@ import {
   ServerCog,
   X,
 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ParsedOracleReport } from "./oracle-reports";
@@ -120,7 +121,12 @@ const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
 const MAINNET_CHAIN_ID = 1;
 const HOODI_CHAIN_ID = 560_048;
 const STALE_SECONDS = 24 * 60 * 60;
-const LOW_BALANCE_ETH = 1;
+const LOW_BALANCE_ETH = 0.3;
+const VIEW_ROUTES: Record<ViewKey, string> = {
+  overview: "/overview",
+  telemetry: "/telemetry",
+  oracle: "/reports",
+};
 const MEMBER_ABI = [
   "function getMembers() view returns (address[] addresses, uint256[] lastReportedRefSlots)",
   "function getChainConfig() view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)",
@@ -191,6 +197,22 @@ function formatTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(timestamp * 1000));
+}
+
+function viewFromPath(pathname: string | null): ViewKey {
+  if (pathname?.startsWith("/telemetry")) return "telemetry";
+  if (pathname?.startsWith("/reports")) return "oracle";
+  return "overview";
+}
+
+function safeNetwork(value: string | null): NetworkKey {
+  return value === "hoodi" || value === "mainnet" ? value : "mainnet";
+}
+
+function safeModule(value: string | null): ModuleKey | "all" {
+  return value === "ao" || value === "vebo" || value === "csm" || value === "cm"
+    ? value
+    : "all";
 }
 
 function safeJson(text: string) {
@@ -498,6 +520,28 @@ function CopyButton({
   );
 }
 
+function RouteButton({
+  value,
+  onCopied,
+}: {
+  value: string;
+  onCopied: () => void;
+}) {
+  return (
+    <button
+      className="route-button"
+      type="button"
+      onClick={async () => {
+        await navigator.clipboard.writeText(value);
+        onCopied();
+      }}
+    >
+      <Copy size={15} />
+      Copy route URL
+    </button>
+  );
+}
+
 function JsonModal({
   message,
   onClose,
@@ -695,6 +739,9 @@ function OracleReportInspector({
 }
 
 export default function OracleMonitor() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [network, setNetwork] = useState<NetworkKey>("mainnet");
   const [view, setView] = useState<ViewKey>("overview");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -716,6 +763,54 @@ export default function OracleMonitor() {
     useState<ParsedOracleReport | null>(null);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState(false);
+
+  const routeFor = useCallback(
+    (
+      nextView: ViewKey,
+      nextNetwork = network,
+      nextModule =
+        nextView === "oracle" ? oracleModuleFilter : moduleFilter,
+    ) => {
+      const params = new URLSearchParams();
+      params.set("network", nextNetwork);
+      if (nextView !== "overview") params.set("module", nextModule);
+      return `${VIEW_ROUTES[nextView]}?${params.toString()}`;
+    },
+    [moduleFilter, network, oracleModuleFilter],
+  );
+
+  const currentRouteUrl =
+    typeof window === "undefined"
+      ? routeFor(view)
+      : new URL(routeFor(view), window.location.origin).toString();
+
+  useEffect(() => {
+    const nextView = viewFromPath(pathname);
+    const nextNetwork = safeNetwork(searchParams.get("network"));
+    const nextModule = safeModule(searchParams.get("module"));
+    setView(nextView);
+    setNetwork(nextNetwork);
+    if (nextView === "telemetry") {
+      setModuleFilter(nextModule);
+    }
+    if (nextView === "oracle") {
+      setOracleModuleFilter(nextModule);
+    }
+  }, [pathname, searchParams]);
+
+  const navigate = useCallback(
+    (nextView: ViewKey, nextNetwork = network, nextModule?: ModuleKey | "all") => {
+      router.push(
+        routeFor(
+          nextView,
+          nextNetwork,
+          nextModule ??
+            (nextView === "oracle" ? oracleModuleFilter : moduleFilter),
+        ),
+      );
+    },
+    [moduleFilter, network, oracleModuleFilter, routeFor, router],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -894,21 +989,21 @@ export default function OracleMonitor() {
           <button
             type="button"
             className={view === "overview" ? "active" : ""}
-            onClick={() => setView("overview")}
+            onClick={() => navigate("overview")}
           >
             <Activity size={16} /> Overview
           </button>
           <button
             type="button"
             className={view === "telemetry" ? "active" : ""}
-            onClick={() => setView("telemetry")}
+            onClick={() => navigate("telemetry")}
           >
             <FileJson size={16} /> Telemetry details
           </button>
           <button
             type="button"
             className={view === "oracle" ? "active" : ""}
-            onClick={() => setView("oracle")}
+            onClick={() => navigate("oracle")}
           >
             <ListTree size={16} /> Oracle reports
           </button>
@@ -917,6 +1012,7 @@ export default function OracleMonitor() {
           <span className="updated">
             {updatedAt ? `Updated ${updatedAt.toLocaleTimeString()}` : "Live RPC"}
           </span>
+          <RouteButton value={currentRouteUrl} onCopied={copied} />
           <button
             className="refresh-button"
             type="button"
@@ -949,9 +1045,9 @@ export default function OracleMonitor() {
               key={key}
               className={network === key ? "active" : ""}
               onClick={() => {
-                setNetwork(key);
                 setSelectedReport(null);
                 setSelectedOracleReport(null);
+                navigate(view, key);
               }}
             >
               <span className={`network-dot ${key}`} />
@@ -1190,8 +1286,8 @@ export default function OracleMonitor() {
                     key={key}
                     className={moduleFilter === key ? "active" : ""}
                     onClick={() => {
-                      setModuleFilter(key);
                       setSelectedReport(null);
+                      navigate("telemetry", network, key);
                     }}
                   >
                     {key === "all" ? "All modules" : key.toUpperCase()}
@@ -1385,8 +1481,8 @@ export default function OracleMonitor() {
                     key={key}
                     className={oracleModuleFilter === key ? "active" : ""}
                     onClick={() => {
-                      setOracleModuleFilter(key);
                       setSelectedOracleReport(null);
+                      navigate("oracle", network, key);
                     }}
                   >
                     {key === "all" ? "All modules" : key.toUpperCase()}
