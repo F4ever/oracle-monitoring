@@ -121,7 +121,7 @@ const DATABUS_EXPLORER = "https://hoodi.etherscan.io";
 const MAINNET_CHAIN_ID = 1;
 const HOODI_CHAIN_ID = 560_048;
 const STALE_SECONDS = 24 * 60 * 60;
-const LOW_BALANCE_ETH = 0.3;
+const LOW_BALANCE_ETH = 0.4;
 const VIEW_ROUTES: Record<ViewKey, string> = {
   overview: "/overview",
   telemetry: "/telemetry",
@@ -770,13 +770,17 @@ export default function OracleMonitor() {
       nextNetwork = network,
       nextModule =
         nextView === "oracle" ? oracleModuleFilter : moduleFilter,
+      nextQuery = query,
     ) => {
       const params = new URLSearchParams();
       params.set("network", nextNetwork);
       if (nextView !== "overview") params.set("module", nextModule);
+      if (nextView === "telemetry" && nextQuery.trim()) {
+        params.set("search", nextQuery.trim());
+      }
       return `${VIEW_ROUTES[nextView]}?${params.toString()}`;
     },
-    [moduleFilter, network, oracleModuleFilter],
+    [moduleFilter, network, oracleModuleFilter, query],
   );
 
   const currentRouteUrl =
@@ -788,14 +792,20 @@ export default function OracleMonitor() {
     const nextView = viewFromPath(pathname);
     const nextNetwork = safeNetwork(searchParams.get("network"));
     const nextModule = safeModule(searchParams.get("module"));
+    const nextQuery = searchParams.get("search") ?? searchParams.get("q") ?? "";
     setView(nextView);
     setNetwork(nextNetwork);
     if (nextView === "telemetry") {
       setModuleFilter(nextModule);
+      setQuery(nextQuery);
+    } else {
+      setQuery("");
     }
     if (nextView === "oracle") {
       setOracleModuleFilter(nextModule);
     }
+    setSelectedReport(null);
+    setSelectedOracleReport(null);
   }, [pathname, searchParams]);
 
   const navigate = useCallback(
@@ -1299,8 +1309,13 @@ export default function OracleMonitor() {
                 <input
                   value={query}
                   onChange={(event) => {
-                    setQuery(event.target.value);
+                    const nextQuery = event.target.value;
+                    setQuery(nextQuery);
                     setSelectedReport(null);
+                    router.replace(
+                      routeFor("telemetry", network, moduleFilter, nextQuery),
+                      { scroll: false },
+                    );
                   }}
                   placeholder="Search member, block, or tx"
                   aria-label="Search reports"
