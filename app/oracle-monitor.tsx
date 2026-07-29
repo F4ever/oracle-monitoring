@@ -537,7 +537,7 @@ function RouteButton({
       }}
     >
       <Copy size={15} />
-      Copy route URL
+      URL
     </button>
   );
 }
