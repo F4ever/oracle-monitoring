@@ -61,6 +61,23 @@ const CURATED_MODULE = new Interface([
 const META_REGISTRY = new Interface([
   "function getOperatorMetadata(uint256) view returns ((string name,string description,bool ownerEditsRestricted))",
 ]);
+const DELEGATION_CONTRACT = new Interface([
+  "function execute(address target,bytes data) payable returns (bytes result)",
+]);
+
+type RpcTransaction = {
+  hash: string;
+  from: string;
+  to: string | null;
+  input: string;
+  blockNumber: string;
+};
+
+type ReportCandidate = {
+  hash: string;
+  module: OracleModule;
+  address: string;
+};
 
 async function explorerHashes(explorer: string, address: string) {
   const response = await fetch(`${explorer}/address/${address}`, {
@@ -156,6 +173,44 @@ async function rpcReportCandidates(
       .filter((candidate) => candidate.module === reportModule)
       .slice(-40),
   );
+}
+
+function unwrapReportTransaction(
+  transaction: RpcTransaction,
+  candidate: ReportCandidate,
+) {
+  if (!transaction.to) return null;
+  if (transaction.to.toLowerCase() === candidate.address.toLowerCase()) {
+    return {
+      transaction: transaction as RpcTransaction & { to: string },
+      module: candidate.module,
+    };
+  }
+
+  try {
+    const execution = DELEGATION_CONTRACT.parseTransaction({
+      data: transaction.input,
+    });
+    if (!execution || execution.name !== "execute") return null;
+    const target = (execution.args[0] as string).toLowerCase();
+    const data = execution.args[1] as string;
+    if (target !== candidate.address.toLowerCase()) return null;
+
+    // The receiver observes the delegation contract as msg.sender. Use that
+    // stable identity for attribution; the top-level sender is its rotatable
+    // hot delegate and is tracked separately in the membership view.
+    return {
+      transaction: {
+        ...transaction,
+        from: transaction.to.toLowerCase(),
+        to: target,
+        input: data,
+      },
+      module: candidate.module,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function resolveVeboOperatorNames(
@@ -346,26 +401,21 @@ export async function GET(request: NextRequest) {
     }
 
     const uniqueHashes = [...new Set(candidates.map(({ hash }) => hash))];
-    const transactions = await rpcBatch<{
-      hash: string;
-      from: string;
-      to: string;
-      input: string;
-      blockNumber: string;
-    }>(config.rpcs, "eth_getTransactionByHash", uniqueHashes.map((hash) => [hash]));
+    const transactions = await rpcBatch<RpcTransaction>(
+      config.rpcs,
+      "eth_getTransactionByHash",
+      uniqueHashes.map((hash) => [hash]),
+    );
     const candidateByHash = new Map(
       candidates.map((candidate) => [candidate.hash, candidate]),
     );
     const reportTransactions = transactions.flatMap((transaction) => {
-      if (!transaction?.to) return [];
+      if (!transaction) return [];
       const candidate = candidateByHash.get(transaction.hash.toLowerCase());
-      if (
-        !candidate ||
-        transaction.to.toLowerCase() !== candidate.address.toLowerCase()
-      ) {
-        return [];
-      }
-      return [{ transaction, module: candidate.module }];
+      const report = candidate
+        ? unwrapReportTransaction(transaction, candidate)
+        : null;
+      return report ? [report] : [];
     });
 
     const blockNumbers = [

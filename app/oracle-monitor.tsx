@@ -38,8 +38,11 @@ type ModuleKey = "ao" | "vebo" | "csm" | "cm";
 type Member = {
   address: string;
   balanceEth: number;
+  delegateAddress?: string;
+  ownerAddress?: string;
   hoodiAddress?: string;
   hoodiBalanceEth?: number;
+  hoodiDelegateAddress?: string;
   lastSlots: Partial<Record<ModuleKey, number>>;
 };
 
@@ -131,6 +134,10 @@ const MEMBER_ABI = [
   "function getMembers() view returns (address[] addresses, uint256[] lastReportedRefSlots)",
   "function getChainConfig() view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)",
 ];
+const DELEGATION_ABI = [
+  "function getDelegate() view returns (address)",
+  "function owner() view returns (address)",
+];
 
 const LABELS: Record<string, string> = {
   "0x8db977c13caa938bc58464bfd622df0570564b78":
@@ -154,6 +161,17 @@ const LABELS: Record<string, string> = {
     "Chorus One (Bitwise)",
   "0x948a62cc0414979dc7aa9364ba5b96ecb29f8736": "Caliber",
   "0xca80ee7313a315879f326105134f938676cfd7a9": "Lido",
+  "0x929de74c921f3e719ad2bb026edef747d443dc8e": "Instadapp",
+  "0x9f81976e461b82cfe3caec06de8efa8ad5543408": "Caliber",
+  "0x9950477b8d8154ef44745612832464c3c2155f79":
+    "Chorus One (Bitwise)",
+  "0xc51fe2b136a24d6ec8368c858ae5211dc2fe0e0b": "Chainlayer",
+  "0x43c97ffef1e41d6429814e2a3ad37aa096d633e": "P2P",
+  "0xc19a08e427351f51da7a82136af66d8f01931738": "Staking Facilities",
+  "0x9d7bfaa500b5dec4fbab2257dfbc0cb3d5c1fbc8": "Stakefish",
+  "0x443e31892ffd51f6f0fef6dae4ac2e2795f311bf": "bloXroute",
+  "0x89e9fcb24cc82e9a449a69f3932c70ca2fa07e1d": "MatrixedLink",
+  "0xafca4694c06720ad03037db3760a920320037217": "Lido",
 };
 
 const TOPIC_MODULES: Record<string, ModuleKey> = {
@@ -326,19 +344,52 @@ async function fetchMembers(
     }
   }
 
+  const members = [...merged.values()];
   const chainContract = new Contract(contracts.ao, MEMBER_ABI, provider);
-  const [[, secondsPerSlot, genesisTime], balances] = await Promise.all([
+  const [[, secondsPerSlot, genesisTime], resolvedMembers] = await Promise.all([
     chainContract.getChainConfig(),
     Promise.all(
-      [...merged.values()].map(async (member) => ({
-        address: member.address,
-        balanceEth: Number(formatEther(await provider.getBalance(member.address))),
-      })),
+      members.map(async (member) => {
+        try {
+          const delegation = new Contract(
+            member.address,
+            DELEGATION_ABI,
+            provider,
+          );
+          const [delegate, owner] = await Promise.all([
+            delegation.getDelegate(),
+            delegation.owner(),
+          ]);
+          return {
+            ...member,
+            delegateAddress: (delegate as string).toLowerCase(),
+            ownerAddress: (owner as string).toLowerCase(),
+          };
+        } catch {
+          return member;
+        }
+      }),
     ),
   ]);
+  const balances = await Promise.all(
+    resolvedMembers.map(async (member) => ({
+      address: member.address,
+      balanceEth: Number(
+        formatEther(
+          await provider.getBalance(member.delegateAddress ?? member.address),
+        ),
+      ),
+    })),
+  );
   balances.forEach(({ address, balanceEth }) => {
     const member = merged.get(address);
     if (member) member.balanceEth = balanceEth;
+  });
+  resolvedMembers.forEach((resolved) => {
+    const member = merged.get(resolved.address);
+    if (!member) return;
+    member.delegateAddress = resolved.delegateAddress;
+    member.ownerAddress = resolved.ownerAddress;
   });
 
   return {
@@ -442,6 +493,7 @@ async function fetchSnapshot(): Promise<Snapshot> {
     if (!hoodiMember) return;
     member.hoodiAddress = hoodiMember.address;
     member.hoodiBalanceEth = hoodiMember.balanceEth;
+    member.hoodiDelegateAddress = hoodiMember.delegateAddress;
   });
   return {
     mainnet: {
@@ -1199,6 +1251,13 @@ export default function OracleMonitor() {
                                   {shorten(member.address, 8, 6)}
                                   <ExternalLink size={11} />
                                 </a>
+                                {member.delegateAddress && (
+                                  <small
+                                    title={`Active delegate: ${member.delegateAddress}`}
+                                  >
+                                    Delegate {shorten(member.delegateAddress, 5, 4)}
+                                  </small>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -1250,14 +1309,18 @@ export default function OracleMonitor() {
                           <td className="balance-column">
                             <BalanceCell
                               balanceEth={member.balanceEth}
-                              walletAddress={member.address}
+                              walletAddress={
+                                member.delegateAddress ?? member.address
+                              }
                             />
                           </td>
                           {network === "mainnet" && (
                             <td className="balance-column">
                               <BalanceCell
                                 balanceEth={member.hoodiBalanceEth}
-                                walletAddress={member.hoodiAddress}
+                                walletAddress={
+                                  member.hoodiDelegateAddress ?? member.hoodiAddress
+                                }
                               />
                             </td>
                           )}
@@ -1458,8 +1521,8 @@ export default function OracleMonitor() {
                 </div>
                 <h1>Onchain oracle reports</h1>
                 <p>
-                  Decoded submitReportData transactions received by Accounting
-                  Oracle, VEBO, CSM FeeOracle, and CM v2 FeeOracle.
+                  Decoded submitReportData calls received directly or through
+                  Execution Delegation Framework contracts.
                 </p>
               </div>
               <div className="reports-count">
@@ -1512,7 +1575,9 @@ export default function OracleMonitor() {
                 <LoaderCircle className="spin" size={22} />
                 <div>
                   <strong>Decoding receiver transactions</strong>
-                  <span>Reading calldata and resolving block timestamps</span>
+                  <span>
+                    Unwrapping delegated calldata and resolving block timestamps
+                  </span>
                 </div>
               </div>
             ) : oracleError && !oraclePayload ? (
