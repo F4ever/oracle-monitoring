@@ -50,6 +50,7 @@ type BusMessage = {
   blockNumber: number;
   transactionHash: string;
   sender: string;
+  memberAddress?: string;
   chainId: number | null;
   module: ModuleKey | "unknown";
   raw: string;
@@ -475,12 +476,22 @@ async function fetchSnapshot(): Promise<Snapshot> {
       fetchDataBus(hoodiProvider),
     ]);
 
-  const mainnetSet = new Set(
-    mainnetMembership.members.map((member) => member.address),
-  );
-  const hoodiSet = new Set(
-    hoodiMembership.members.map((member) => member.address),
-  );
+  const attachMembersToTelemetry = (
+    chainId: number,
+    members: Member[],
+  ) => {
+    const memberByDelegate = new Map(
+      members.map((member) => [
+        member.delegateAddress ?? member.address,
+        member.address,
+      ]),
+    );
+    return messages.flatMap((message) => {
+      if (message.chainId !== chainId) return [];
+      const memberAddress = memberByDelegate.get(message.sender);
+      return memberAddress ? [{ ...message, memberAddress }] : [];
+    });
+  };
   const hoodiByOrganization = new Map(
     hoodiMembership.members.flatMap((member) => {
       const label = LABELS[member.address];
@@ -499,19 +510,18 @@ async function fetchSnapshot(): Promise<Snapshot> {
     mainnet: {
       members: mainnetMembership.members,
       blockNumber: mainnetBlock,
-      messages: messages.filter(
-        (message) =>
-          message.chainId === MAINNET_CHAIN_ID &&
-          mainnetSet.has(message.sender),
+      messages: attachMembersToTelemetry(
+        MAINNET_CHAIN_ID,
+        mainnetMembership.members,
       ),
       chainConfig: mainnetMembership.chainConfig,
     },
     hoodi: {
       members: hoodiMembership.members,
       blockNumber: hoodiBlock,
-      messages: messages.filter(
-        (message) =>
-          message.chainId === HOODI_CHAIN_ID && hoodiSet.has(message.sender),
+      messages: attachMembersToTelemetry(
+        HOODI_CHAIN_ID,
+        hoodiMembership.members,
       ),
       chainConfig: hoodiMembership.chainConfig,
     },
@@ -959,9 +969,9 @@ export default function OracleMonitor() {
     const map = new Map<string, Map<ModuleKey, BusMessage>>();
     for (const message of data.messages) {
       if (message.module === "unknown") continue;
-      const modules = map.get(message.sender) ?? new Map();
+      const modules = map.get(message.memberAddress ?? message.sender) ?? new Map();
       if (!modules.has(message.module)) modules.set(message.module, message);
-      map.set(message.sender, modules);
+      map.set(message.memberAddress ?? message.sender, modules);
     }
     return map;
   }, [data]);
@@ -1012,7 +1022,9 @@ export default function OracleMonitor() {
       const matchesQuery =
         !needle ||
         message.sender.includes(needle) ||
-        (LABELS[message.sender] ?? "").toLowerCase().includes(needle) ||
+        (LABELS[message.memberAddress ?? message.sender] ?? "")
+          .toLowerCase()
+          .includes(needle) ||
         message.transactionHash.toLowerCase().includes(needle) ||
         String(message.blockNumber).includes(needle);
       return matchesModule && matchesQuery;
@@ -1252,11 +1264,15 @@ export default function OracleMonitor() {
                                   <ExternalLink size={11} />
                                 </a>
                                 {member.delegateAddress && (
-                                  <small
+                                  <a
+                                    href={`${explorer}/address/${member.delegateAddress}`}
+                                    target="_blank"
+                                    rel="noreferrer"
                                     title={`Active delegate: ${member.delegateAddress}`}
                                   >
                                     Delegate {shorten(member.delegateAddress, 5, 4)}
-                                  </small>
+                                    <ExternalLink size={11} />
+                                  </a>
                                 )}
                               </div>
                             </div>
@@ -1412,7 +1428,8 @@ export default function OracleMonitor() {
                         </span>
                         <span className="ledger-sender">
                           <strong>
-                            {LABELS[message.sender] ?? "Unknown operator"}
+                            {LABELS[message.memberAddress ?? message.sender] ??
+                              "Unknown operator"}
                           </strong>
                           <small>{shorten(message.sender, 5, 4)}</small>
                         </span>
@@ -1479,7 +1496,9 @@ export default function OracleMonitor() {
                       <div>
                         <span>Sender</span>
                         <strong>
-                          {LABELS[visibleReport.sender] ?? "Unknown operator"}
+                          {LABELS[
+                            visibleReport.memberAddress ?? visibleReport.sender
+                          ] ?? "Unknown operator"}
                         </strong>
                       </div>
                       <div>
