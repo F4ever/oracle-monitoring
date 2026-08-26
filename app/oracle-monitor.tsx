@@ -167,7 +167,7 @@ const LABELS: Record<string, string> = {
   "0x9950477b8d8154ef44745612832464c3c2155f79":
     "Chorus One (Bitwise)",
   "0xc51fe2b136a24d6ec8368c858ae5211dc2fe0e0b": "Chainlayer",
-  "0x43c97ffef1e41d6429814e2a3ad37aa096d633e": "P2P",
+  "0x43c97fefef1e41d6429814e2a3ad37aa096d633e": "P2P",
   "0xc19a08e427351f51da7a82136af66d8f01931738": "Staking Facilities",
   "0x9d7bfaa500b5dec4fbab2257dfbc0cb3d5c1fbc8": "Stakefish",
   "0x443e31892ffd51f6f0fef6dae4ac2e2795f311bf": "bloXroute",
