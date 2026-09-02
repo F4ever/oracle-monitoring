@@ -139,6 +139,14 @@ const DELEGATION_ABI = [
   "function getDelegate() view returns (address)",
   "function owner() view returns (address)",
 ];
+const DELEGATION_CONTRACT_OVERRIDES: Partial<
+  Record<NetworkKey, Record<string, string>>
+> = {
+  hoodi: {
+    "0x929de74c921f3e719ad2bb026edef747d443dc8e":
+      "0x43C45C2455c49EEd320F463fF4f1Ece3D2BF5aE2",
+  },
+};
 
 const LABELS: Record<string, string> = {
   "0x8db977c13caa938bc58464bfd622df0570564b78":
@@ -317,6 +325,7 @@ async function connect(rpcs: readonly string[]) {
 async function fetchMembers(
   provider: JsonRpcProvider,
   contracts: Record<ModuleKey, string>,
+  network: NetworkKey,
 ) {
   const moduleResults = await Promise.all(
     MODULES.map(async ({ key }) => {
@@ -352,8 +361,11 @@ async function fetchMembers(
     Promise.all(
       members.map(async (member) => {
         try {
+          const delegationContract =
+            DELEGATION_CONTRACT_OVERRIDES[network]?.[member.address] ??
+            member.address;
           const delegation = new Contract(
-            member.address,
+            delegationContract,
             DELEGATION_ABI,
             provider,
           );
@@ -469,8 +481,8 @@ async function fetchSnapshot(): Promise<Snapshot> {
     messages,
   ] =
     await Promise.all([
-      fetchMembers(mainnetProvider, NETWORKS.mainnet.consensus),
-      fetchMembers(hoodiProvider, NETWORKS.hoodi.consensus),
+      fetchMembers(mainnetProvider, NETWORKS.mainnet.consensus, "mainnet"),
+      fetchMembers(hoodiProvider, NETWORKS.hoodi.consensus, "hoodi"),
       mainnetProvider.getBlockNumber(),
       hoodiProvider.getBlockNumber(),
       fetchDataBus(hoodiProvider),
